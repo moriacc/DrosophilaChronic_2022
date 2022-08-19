@@ -1,0 +1,271 @@
+---
+title: "Logistic models to assess tolerance"
+author: "Madyline Lawrence, Moria Chambers & Owais Gilani"
+date: "6/17/2022"
+editor_options:
+  chunk_output_type: console
+output:
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    toc_depth: 4
+    theme: cerulean
+    code_folding: hide
+---
+# Goal: To determine how chronic infection alters the ability to tolerate secondary infections of unrelated bacteria
+
+## Ready the workspace
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include = FALSE}
+# Importing packages needed
+
+library(gdata)
+library(ggplot2)
+library(stringr)
+library(boot)
+library(data.table)
+library(dplyr)
+library(formattable)
+library(tidyr)
+library(caret)
+library(questionr)
+library(DescTools)
+library(survival)
+```
+
+```{r}
+rm(list=ls()) #removes all old variables
+
+#import the dataset
+efdata = read.csv("E.fae data.csv")
+smdata = read.csv("S.m data.csv")
+
+ef.bygroup = distinct(efdata, scientist,rep, primary, secondary_dose, X0.hour, X10.hour, log10_10hour)
+sm.bygroup = distinct(smdata, scientist, rep, primary, secondary_dose, X0.hour, X10.hour, log10_10hour)
+```
+
+# Chronic infection with *S. marcescens* {.tabset}
+
+## Full Logistic Model
+  + Does chronic infection with *S. marcescens* significantly impact tolerance to secondary infection with *P. rettgeri*?
+  + We assessed this by determining whether chronic infection significantly impacts the relationship between log 10 (bacterial load at 10 hours post-secondary infection) and survival three days post-secondary infection.
+```{r}
+mylogit = glm(formula = bin_alive3 ~ log10_10hour + bin_primary + (bin_primary*log10_10hour), family = "binomial", data = smdata)
+summary(mylogit)
+
+# C-Statistic
+cat(paste("C-Statistic =", round(Cstat(mylogit), 4)))
+```
+  + **Conclusion** - Yes, chronic infection with *S. marcesens* has a significant impact on survival three days post-infection (p = 0.02) and significantly impacts the relationship between log(10 hour bacterial load) and survival at three days post-infection (p << 0.001).
+
+## Values of Interest
+
+```{r}
+# Function to calculate Inflection Point
+inflection.point <- function(beta0, beta1){
+  return(as.numeric(-beta0/beta1))
+}
+
+# Function to calculate Hill's Slope
+hill.slope <- function(beta0, beta1){
+  x <- -beta0/beta1
+  u <- beta0+beta1*x
+  return(as.numeric(beta1*exp(u)/(1+exp(u))^2))
+}
+```
+
+```{r eval=FALSE}
+# PBS curve point of inflection
+inflection.point(beta0=mylogit$coefficients[1], beta1=mylogit$coefficients[2])
+
+# PBS Hill's slope
+hill.slope(beta0=mylogit$coefficients[1], beta1=mylogit$coefficients[2])
+
+# S. Marcescens Curve point of inflection
+inflection.point(beta0=(mylogit$coefficients[1]+mylogit$coefficients[3]),
+                 beta1=(mylogit$coefficients[2]+mylogit$coefficients[4]))
+
+# S. Marcescens Hill's slope
+hill.slope(beta0=(mylogit$coefficients[1]+mylogit$coefficients[3]),
+           beta1=(mylogit$coefficients[2]+mylogit$coefficients[4]))
+```
+  + PBS curve point of inflection = 3.6981
+  + PBS hill slope = -0.26585
+  + *S. marcescens* curve point of inflection = 5.71890
+  + *S. marcescens* hill slope = -0.10105
+
+## Figure 3C
+```{r}
+bact_val <- seq(2,9,0.01)
+PBS_predict_data <- data.frame(log10_10hour = bact_val, 
+                               bin_primary = c(rep(0, length(bact_val))))
+# PBS Prediction
+PBS_preds <- predict(mylogit, newdata = PBS_predict_data, type = "response", se.fit = TRUE)
+PBS_upper = (PBS_preds$fit+(1.96*PBS_preds$se.fit))
+PBS_lower = (PBS_preds$fit-(1.96*PBS_preds$se.fit))
+
+# SM Prediction
+SM_predict_data <- data.frame(log10_10hour = bact_val, 
+                              bin_primary = c(rep(1, length(bact_val))))
+SM_preds <- predict(mylogit, newdata=SM_predict_data, type = "response", se.fit = TRUE)
+SM_upper = (SM_preds$fit+(1.96*SM_preds$se.fit))
+SM_lower = (SM_preds$fit-(1.96*SM_preds$se.fit))
+```
+
+```{r, echo = FALSE}
+#png(file="Figure3C.png", width = 1500, height = 1500, res = 300)
+#par(family = "Times")
+plot(0,0, type = "n",
+    bty = "n",
+    lwd=2, #line width
+    yaxt='n',
+    xaxt='n',
+    ylab="probability of survival", #label for the y-axis
+    xlab=expression("log"[10]*"(bacterial load at 10 hours post-infection)"), #label for the x-axis
+    cex.lab=1.3, #font size of axis labels
+    xlim = c(2, 9), #determines range of the x-axis
+    xaxs='i', #makes the data flush with the axis 
+    ylim = c(0, 1), #determines range of the y-axis
+    yaxs='i') #makes the data flush with the axis
+axis(2, #left side
+     las=2, #perpendicular to the axis
+     cex.axis=1, #font size
+     lwd=2) #line width
+axis(1, #bottom of the graph
+     cex.axis=1, #font size
+     lwd=2) #line width
+
+polygon(c(bact_val, rev(bact_val)), c(PBS_upper, rev(PBS_lower)), border = NA, col = adjustcolor("gray", alpha.f=0.6))
+polygon(c(bact_val, rev(bact_val)), c(SM_upper, rev(SM_lower)), border = NA, col = adjustcolor("#055df5", alpha.f=0.6))
+lines(PBS_preds$fit~bact_val,col="gray",lty=2, lwd = 3)
+lines(SM_preds$fit~bact_val, col="#055df5",lty=1, lwd = 3)
+
+legend("topright", c("chronically infected", "control"), col=c("#055df5","gray"),lty = c(1,2), lwd = 3, cex = 1.3, bty = "n")
+lines(bact_val, PBS_upper, lty=1, lwd = 1, col=adjustcolor("gray", alpha.f=0.7))
+lines(bact_val, PBS_lower, lty=1, lwd = 1, col=adjustcolor("gray", alpha.f=0.7))
+lines(bact_val, SM_upper, lty=1, lwd = 1, col=adjustcolor("#055df5", alpha.f=0.7))
+lines(bact_val, SM_lower, lty=1, lwd = 1, col=adjustcolor("#055df5", alpha.f=0.7))
+
+#dev.off()
+```
+
+
+# Chronic infection with *E. faecalis* {.tabset}
+
+## Full Logistic Model
+  + Does chronic infection with *E. faecalis* significantly impact tolerance to secondary infection with *P. rettgeri*?
+  + We assessed this by determining whether chronic infection significantly impacts the relationship between log 10 (bacterial load at 10 hours post-secondary infeciton) and survival three days post-secondary infection.
+```{r}
+mylogit_Ef = glm(formula = bin_alive3 ~ log10_10hour + bin_primary + (bin_primary*log10_10hour), family = "binomial", data = efdata)
+summary(mylogit_Ef)
+
+# C-Statistic
+cat(paste("C-Statistic =", round(Cstat(mylogit_Ef), 4)))
+```
+  + **Conclusion** - No, chronic infection with *E. faecalis* does not significantly impact the relationship between log(10 hour bacterial load) and survival at three days post-infection (p = 0.52). Therefore we removed this from the model to better assess the overall impact of chronic infection with *E. faecalis*
+
+## Reduced Logistic Model
+
+```{r}
+## Since the interaction term isn't significant, removed it from the model and reran
+mylogit_Ef_redux = glm(formula = bin_alive3 ~ log10_10hour + bin_primary, family = "binomial", data = efdata)
+summary(mylogit_Ef_redux)
+anova(mylogit_Ef_redux, mylogit_Ef)
+
+cat(paste("C-Statistic =", round(Cstat(mylogit_Ef_redux), 4)))
+```
+  + **Conclusion** - Chronic infection with *E. faecalis* significantly impacts survival at three days post-infection (p<0.001)
+
+## Values of Interest
+
+```{r}
+# Function to calculate Inflection Point
+inflection.point <- function(beta0, beta1){
+  return(as.numeric(-beta0/beta1))
+}
+
+# Function to calculate Hill's Slope
+hill.slope <- function(beta0, beta1){
+  x <- -beta0/beta1
+  u <- beta0+beta1*x
+  return(as.numeric(beta1*exp(u)/(1+exp(u))^2))
+}
+```
+
+```{r eval=FALSE}
+# PBS curve point of inflection
+inflection.point(beta0=mylogit_Ef_redux$coefficients[1], beta1=mylogit_Ef_redux$coefficients[2])
+
+# PBS Hill's slope
+hill.slope(beta0=mylogit_Ef_redux$coefficients[1], beta1=mylogit_Ef_redux$coefficients[2])
+
+# E.faecalis Curve point of inflection
+inflection.point(beta0=(mylogit_Ef_redux$coefficients[1]+mylogit_Ef_redux$coefficients[3]),
+                 beta1=(mylogit_Ef_redux$coefficients[2]))
+
+# E.faecalis Hill's slope
+hill.slope(beta0=(mylogit_Ef_redux$coefficients[1]+mylogit_Ef_redux$coefficients[3]),
+           beta1=(mylogit_Ef_redux$coefficients[2]))
+```
+  + PBS curve point of inflection = 3.55631 
+  + PBS hill slope = -0.14356
+  + *E.faecalis* curve point of inflection = 4.55966
+  + *E.faecalis* hill slope = -0.14356
+
+
+## Figure 3D
+```{r}
+bact_val = seq(2,9,0.01)
+PBS_predict_data <- data.frame(log10_10hour = bact_val, 
+                               bin_primary = c(rep(0, length(bact_val))))
+
+PBS_preds <- predict(mylogit_Ef_redux, newdata=PBS_predict_data, type = "response",se.fit =TRUE)
+PBS_upper = (PBS_preds$fit+1.96*PBS_preds$se.fit)
+PBS_lower = (PBS_preds$fit-1.96*PBS_preds$se.fit)
+
+Efae_predict_data <- data.frame(log10_10hour = bact_val, 
+                                bin_primary = c(rep(1, length(bact_val))))
+
+Efae_preds <- predict(mylogit_Ef_redux, newdata=Efae_predict_data, type = "response",se.fit = TRUE)
+Efae_upper = (Efae_preds$fit+(1.96*Efae_preds$se.fit))
+Efae_lower = (Efae_preds$fit-(1.96*Efae_preds$se.fit))
+```
+
+```{r, echo = FALSE}
+#png(file="Figure3D.png", width = 1500, height = 1500, res = 300)
+#par(family = "Times")
+plot(0,0, type = "n",
+    bty = "n",
+    lwd=2, #line width
+    yaxt='n',
+    xaxt='n',
+    ylab="probability of survival", #label for the y-axis
+    xlab=expression("log"[10]*"(bacterial load 10 hours post-infection)"), #label for the x-axis
+    cex.lab=1.3, #font size of axis labels
+    xlim = c(2, 9), #determines range of the x-axis
+    xaxs='i', #makes the data flush with the axis 
+    ylim = c(0, 1), #determines range of the y-axis
+    yaxs='i') #makes the data flush with the axis
+axis(2, #left side
+     las=2, #perpendicular to the axis
+     cex.axis=1, #font size
+     lwd=2) #line width
+axis(1, #bottom of the graph
+     cex.axis=1, #font size
+     lwd=2) #line width
+
+polygon(c(bact_val, rev(bact_val)), c(PBS_upper, rev(PBS_lower)), border = NA, col = adjustcolor("gray", alpha.f=0.6))
+polygon(c(bact_val, rev(bact_val)), c(Efae_upper, rev(Efae_lower)), border = NA, col = adjustcolor("#055df5", alpha.f=0.6))
+lines(PBS_preds$fit~bact_val,col="gray",lty = 2, lwd = 3)
+lines(Efae_preds$fit~bact_val, col="#055df5",lty = 1, lwd = 3)
+
+legend("topright", c("chronically infected", "control"), col=c("#055df5","gray"), lty=c(1,2), lwd = 3, cex = 1.3, bty = "n")
+lines(bact_val, PBS_upper, lty=1, lwd = 1, col=adjustcolor("gray", alpha.f=0.7))
+lines(bact_val, PBS_lower, lty=1, lwd = 1, col=adjustcolor("gray", alpha.f=0.7))
+lines(bact_val, Efae_upper, lty=1, lwd = 1, col=adjustcolor("#055df5", alpha.f=0.7))
+lines(bact_val, Efae_lower, lty=1, lwd = 1, col=adjustcolor("#055df5", alpha.f=0.7))
+#dev.off()
+```

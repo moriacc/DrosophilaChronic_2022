@@ -1,0 +1,76 @@
+---
+title: "AMP Expression"
+author: "Madyline Lawrence, Moria Chambers & Owais Gilani"
+date: "6/17/2022"
+editor_options:
+  chunk_output_type: console
+output:
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    toc_depth: 4
+    theme: cerulean
+    code_folding: hide
+---
+# Goal: To determine how chronic infection alters the ability to tolerate secondary infections of unrelated bacteria
+
+## Ready the workspace
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include = FALSE}
+# Importing packages needed
+library(ggplot2)
+
+```
+
+```{r}
+rm(list=ls()) #removes all old variables
+
+#import the dataset
+AMP = read.csv("AFile3_Diptericin.csv")
+AMP$Dipt_deltadeltaCt_normALL<-as.numeric(as.character(AMP$Dipt_deltadeltaCt_normALL))
+
+#removed all data for which there was poor agreement between technical replicates (>1.5 SE)
+AMP_good<-subset(AMP, Dipt_Quality=="Good"|Dipt_Quality=="Okay")
+AMP_0h<-subset(AMP_good, Time==0)
+```
+
+## AMP expression during chronic infection {.tabset} 
+
+  + Does the dose used to initiate chronic infection with *S. marcescens* significantly impact expression of Diptericin?
+  + We assessed this by first calculating the deltadelta Ct value, using the control condition as the baseline and Rp49 as the housekeeping gene. The reference deltaCt was obtained by averaging across control delta Cts from each date
+  + Then we built a lm with Date and infectious dose as explanatory variables and ran a Tukey test to assess which doses were significantly different than one another.
+  + All doses except for the lowest dose (0.001) had significantly higher expression than the sterile saline injected controls (p<0.001)
+  + The second lowest dose (0.01) resulted in an intermediate value of diptericin expression as it was significantly higher than sterile saline and 0.001 and significantly lower than 0.1, 1.0 and 2.0 (p<0.05)
+  + There was no significant difference in expression between the three highest doses (p>0.05).
+
+### Statistics
+```{r}
+#AMPstat_0h<-subset(AMP_0h, Primary=="02_Sm0.001"|Primary=="03_Sm0.01"|Primary=="04_Sm0.1"|Primary=="05_Sm1.0"|Primary=="06_Sm2.0")
+AMPmodel_0h = aov(Dipt_deltadeltaCt_normALL~Date+Primary, data=AMP_0h)
+summary(AMPmodel_0h)
+TukeyHSD(AMPmodel_0h,"Primary")
+```
+
+
+### Graph
+```{r}
+#png(file="AFigure2a.png", width=3200, height=1800, res=300)
+ggplot(AMP_0h, aes(x = Primary, y = -Dipt_deltadeltaCt_normALL, fill=Date)) +
+  scale_fill_manual(values=c("#DB9024", "#21E04C", "#1D72EC","purple"), 
+                       name=" Date ",
+                       breaks=c("04.15.2022","05.01.2022","05.08.2022","05.09.2022"),
+                       labels=c("April 15, 2022", "May 1, 2022", "May 8, 2022","May 9, 2022")) +
+  #geom_boxplot(position=position_dodge(0.8))+
+  geom_dotplot(binaxis='y', stackdir='center') +
+  #ggtitle("S. marcescens chronic infection") +
+  theme_classic(base_size = 25) +
+  xlab("primary infectious dose") +
+  ylab("-deltadeltaCt Diptericin")+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  scale_x_discrete("Primary infectious dose", labels = c("01_PBS"="Sterile Saline","02_Sm0.001" = "Sm 0.001", "03_Sm0.01" = "Sm 0.01","04_Sm0.1" = "Sm 0.1","05_Sm1.0" = "Sm 1.0","06_Sm2.0" = "Sm 2.0"))
+#dev.off()
+  
+```
+
